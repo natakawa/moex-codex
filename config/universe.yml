@@ -1,0 +1,46 @@
+# Universe definition: MOEX secids + asset type + currency base (portfolio base is RUB).
+#
+# types: share | etf | bond | index
+#
+# Notes:
+# - We use price returns for all instruments (simplification).
+# - For bonds we fetch candles and use close-to-close price returns (not total return).
+
+asof_timezone: "Europe/Moscow"
+history_years: 5
+frequency: "daily"
+
+benchmark:
+  secid: "IMOEX"
+  type: "index"
+
+risk_free:
+  # Chosen from your list as a liquid, short-ish RUB OFZ proxy.
+  # You can change later.
+  secid: "SU26219RMFS4"
+  type: "bond"
+
+assets:
+  - {secid: "SBER", type: "share"}
+  - {secid: "LKOH", type: "share"}
+  - {secid: "T", type: "share"}
+  - {secid: "VTBR", type: "share"}
+  - {secid: "OZON", type: "share"}
+  - {secid: "YDEX", type: "share"}
+  - {secid: "X5", type: "share"}
+  - {secid: "SPBE", type: "share"}
+  - {secid: "PLZL", type: "share"}
+  - {secid: "PHOR", type: "share"}
+
+  - {secid: "LQDT", type: "etf"}
+  - {secid: "TMOS", type: "etf"}
+  - {secid: "TGLD", type: "etf"}
+
+  - {secid: "RU000A108Q29", type: "bond"}
+  - {secid: "RU000A10CMR3", type: "bond"}
+  - {secid: "RU000A10DQA8", type: "bond"}
+  - {secid: "RU000A105QX1", type: "bond"}
+  - {secid: "SU26226RMFS9", type: "bond"}
+  - {secid: "SU26207RMFS9", type: "bond"}
+  - {secid: "SU26212RMFS9", type: "bond"}
+

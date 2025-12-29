@@ -1,0 +1,2 @@
+[console_scripts]
+moexpf = moex_portfolio.cli:main

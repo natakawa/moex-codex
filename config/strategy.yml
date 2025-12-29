@@ -1,0 +1,69 @@
+# Mandate 2 defaults (Endowment / Balanced efficiency).
+# You can relax/override later without code changes.
+
+estimation:
+  # mean/cov estimation for daily returns
+  annualization_days: 252
+  covariance:
+    method: "sample"  # sample | ledoit_wolf (planned)
+
+data_quality:
+  # To avoid collapsing the sample to a tiny intersection, we exclude instruments
+  # that have too little history. This can be tuned later.
+  min_obs_days: 504      # ~2 years
+  min_coverage: 0.95     # share of non-NaN points required within a window
+
+optimization:
+  objective: "max_sharpe"
+  long_only: true
+  fully_invested: true
+
+  # "Modest RF buffer" default (can be set to 0 later).
+  min_weight_rf: 0.10
+
+  # Diversification defaults: avoid one-idea portfolios.
+  max_weight_any: 0.20
+
+  # Turnover awareness (optional in objective; implemented as a report for now).
+  turnover:
+    enabled: false
+    reference_weights: "equal"  # equal | previous | file
+    penalty_lambda: 0.0
+
+  robust_near_max_sharpe:
+    enabled: true
+    # Keep Sharpe close to the best achievable under constraints.
+    # Example: eps=0.05 means Sharpe >= 95% of max Sharpe (relative).
+    eps_sharpe_relative: 0.05
+    # Second-stage objective: pick the most stable portfolio among near-optimal ones.
+    # - turnover_lambda penalizes changes vs reference weights
+    # - l2_lambda penalizes deviation vs reference weights (smooth stability)
+    # - hhi_lambda penalizes concentration (sum w^2)
+    turnover_lambda: 5.0
+    l2_lambda: 1.0
+    hhi_lambda: 0.1
+
+robustness:
+  rolling_windows:
+    enabled: true
+    window_trading_days: 504   # ~2 years
+    step_trading_days: 21      # ~1 month
+
+frontier:
+  points: 30
+
+factors:
+  multifactor:
+    enabled: true
+    # Minimum: market excess + 2 additional factors (example set for this universe).
+    # All regressions are in daily returns (price-return, RUB base).
+    factors:
+      - {name: "MKT_EXCESS", secid: "IMOEX", excess_vs_rf: true}
+      - {name: "GOLD", secid: "TGLD", excess_vs_rf: false}
+      - {name: "LIQ", secid: "LQDT", excess_vs_rf: false}
+
+backtest:
+  enabled: true
+  lookback_trading_days: 504
+  rebalance_step_trading_days: 21
+  transaction_cost_bps: 10

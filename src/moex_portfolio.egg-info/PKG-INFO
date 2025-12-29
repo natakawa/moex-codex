@@ -1,0 +1,60 @@
+Metadata-Version: 2.4
+Name: moex-portfolio
+Version: 0.1.0
+Summary: MOEX portfolio research and construction (CSV-auditable), using moexapi.
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: moexapi>=1.0
+Requires-Dist: numpy>=1.26
+Requires-Dist: pandas>=2.2
+Requires-Dist: scipy>=1.12
+Requires-Dist: pyyaml>=6.0.1
+Requires-Dist: streamlit>=1.30
+Requires-Dist: matplotlib>=3.8
+
+# moex-portfolio
+
+Python project for building and defending a MOEX-based portfolio:
+
+- Data source: `moexapi` (MOEX ISS).
+- All pulled data is saved to CSV (`data/raw`), so you can recompute manually.
+- Portfolio construction: constrained near-max Sharpe with robustness hooks (rolling windows, turnover penalty).
+
+## Quick start
+
+Install:
+
+```bash
+python3 -m pip install -e .
+```
+
+Run the pipeline (downloads ~5 years daily candles for the configured universe):
+
+```bash
+moexpf fetch
+moexpf build
+moexpf analyze
+moexpf optimize
+moexpf robustness
+```
+
+All outputs go into `data/`.
+
+## Configure universe / constraints
+
+Edit `config/universe.yml` and `config/strategy.yml`.
+
+## Web View
+
+To view the portfolio dashboard:
+
+```bash
+moexpf web
+```
+
+Or manually:
+
+```bash
+streamlit run src/moex_portfolio/web.py
+```
+
