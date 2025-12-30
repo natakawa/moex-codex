@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
 
+from .estimation import EstimationConfig, estimate_mu_cov, filter_and_align_returns
+
 
 @dataclass(frozen=True)
 class Constraints:
@@ -39,7 +41,12 @@ def robust_near_max_sharpe_long_only(
     l2_lambda: float,
     hhi_lambda: float,
     reference_weights: pd.Series,
+    estimation: EstimationConfig,
 ) -> pd.Series:
+    if constraints.min_weight_rf > constraints.max_weight_any:
+        raise ValueError(
+            f"Infeasible bounds: min_weight_rf={constraints.min_weight_rf} > max_weight_any={constraints.max_weight_any}"
+        )
     """
     Two-stage approach:
       1) Find max-Sharpe portfolio under constraints.
@@ -49,12 +56,13 @@ def robust_near_max_sharpe_long_only(
     NOTE: Sharpe is computed on daily returns with RF treated as an asset; the excess
     is taken vs the RF asset mean return.
     """
-    w_max = max_sharpe_long_only(returns, rf_col=rf_col, constraints=constraints)
+    w_max = max_sharpe_long_only(returns, rf_col=rf_col, constraints=constraints, estimation=estimation)
 
-    x = returns[w_max.index].dropna(how="any")
+    x = filter_and_align_returns(returns[w_max.index], min_obs_days=constraints.min_obs_days)
     cols = list(x.columns)
-    mu = x.mean().to_numpy()
-    cov = x.cov().to_numpy()
+    mu_s, cov_df = estimate_mu_cov(x, estimation)
+    mu = mu_s.to_numpy()
+    cov = cov_df.to_numpy()
     n = len(cols)
     rf_idx = cols.index(rf_col)
     w_max_np = w_max.to_numpy(dtype=float)
@@ -107,30 +115,30 @@ def max_sharpe_long_only(
     returns: pd.DataFrame,
     rf_col: str,
     constraints: Constraints,
+    estimation: EstimationConfig,
 ) -> pd.Series:
+    if constraints.min_weight_rf > constraints.max_weight_any:
+        raise ValueError(
+            f"Infeasible bounds: min_weight_rf={constraints.min_weight_rf} > max_weight_any={constraints.max_weight_any}"
+        )
     if rf_col not in returns.columns:
         raise ValueError(f"rf_col={rf_col} not in returns columns")
     # Avoid shrinking the entire sample to the intersection across illiquid/new instruments:
     # 1) drop columns with too little history
-    non_na = returns.notna().sum(axis=0)
-    keep_cols = non_na[non_na >= constraints.min_obs_days].index.tolist()
-    if rf_col not in keep_cols:
-        keep_cols.append(rf_col)
-    x = returns[keep_cols].dropna(how="any")
-    if x.empty:
-        raise ValueError("No overlapping return history after dropping NaNs")
+    x = filter_and_align_returns(returns, min_obs_days=constraints.min_obs_days)
 
     cols = list(x.columns)
-    mu = x.mean().to_numpy()
-    cov = x.cov().to_numpy()
+    mu_s, cov_df = estimate_mu_cov(x, estimation)
+    mu = mu_s.to_numpy()
+    cov = cov_df.to_numpy()
 
     n = len(cols)
     rf_idx = cols.index(rf_col)
+    rf_mu = float(mu[rf_idx])
 
     def objective(w: np.ndarray) -> float:
         ret, vol = _portfolio_stats(mu, cov, w)
-        # treat rf as just another asset return (OFZ price return proxy).
-        sr = ret / vol if vol > 0 else -1e9
+        sr = ((ret - rf_mu) / vol) if vol > 0 else -1e9
         return -sr
 
     bounds = [(0.0, constraints.max_weight_any) for _ in range(n)]

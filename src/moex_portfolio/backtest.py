@@ -5,7 +5,8 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from .optimizer import Constraints, max_sharpe_long_only
+from .optimizer import Constraints, max_sharpe_long_only, robust_near_max_sharpe_long_only
+from .estimation import EstimationConfig
 
 
 @dataclass(frozen=True)
@@ -13,6 +14,11 @@ class BacktestSpec:
     lookback_days: int
     rebalance_step_days: int
     transaction_cost_bps: float
+    use_robust: bool = True
+    eps_sharpe_relative: float = 0.05
+    turnover_lambda: float = 5.0
+    l2_lambda: float = 1.0
+    hhi_lambda: float = 0.1
 
 
 def run_backtest(
@@ -20,6 +26,7 @@ def run_backtest(
     rf_col: str,
     constraints: Constraints,
     spec: BacktestSpec,
+    estimation: EstimationConfig,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Simple walk-forward backtest:
@@ -51,7 +58,20 @@ def run_backtest(
     last_reb_idx = spec.lookback_days
     for reb_idx in range(spec.lookback_days, len(dates) - 1, spec.rebalance_step_days):
         window = x_all.iloc[reb_idx - spec.lookback_days : reb_idx]
-        w = max_sharpe_long_only(window, rf_col=rf_col, constraints=constraints)
+        if spec.use_robust:
+            w = robust_near_max_sharpe_long_only(
+                window,
+                rf_col=rf_col,
+                constraints=constraints,
+                eps_sharpe_relative=spec.eps_sharpe_relative,
+                turnover_lambda=spec.turnover_lambda,
+                l2_lambda=spec.l2_lambda,
+                hhi_lambda=spec.hhi_lambda,
+                reference_weights=w_prev,
+                estimation=estimation,
+            )
+        else:
+            w = max_sharpe_long_only(window, rf_col=rf_col, constraints=constraints, estimation=estimation)
         w = w.reindex(investable_cols).fillna(0.0)
 
         turnover = 0.5 * float((w - w_prev).abs().sum())
@@ -97,4 +117,3 @@ def backtest_summary(daily_df: pd.DataFrame) -> dict[str, float]:
         "vol_daily": float(rp.std(ddof=1)),
         "turnover_total": float(daily_df["turnover"].sum()) if "turnover" in daily_df.columns else 0.0,
     }
-

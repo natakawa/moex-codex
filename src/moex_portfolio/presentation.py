@@ -152,6 +152,7 @@ def write_defense_markdown(
     lines.append("### Data\n")
     lines.append("- Raw MOEX dumps: `data/raw/candles/*.csv` (+ `*.meta.json` request metadata)\n")
     lines.append("- Processed panel: `data/processed/prices_raw.csv`, `data/processed/prices.csv`, `data/processed/returns.csv`\n")
+    lines.append("- Backtests: `data/analytics/backtest_daily_max_sharpe.csv`, `data/analytics/backtest_daily_robust.csv` (+ `*_rebalances_*.csv`)\n")
     lines.append("\n### µ and Σ estimation\n")
     lines.append("- µ: sample mean of daily returns over the chosen window.\n")
     lines.append("- Σ: sample covariance matrix of daily returns.\n")

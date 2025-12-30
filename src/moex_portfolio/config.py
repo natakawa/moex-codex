@@ -46,7 +46,10 @@ def load_universe(path: str | Path) -> UniverseConfig:
 @dataclass(frozen=True)
 class StrategyConfig:
     annualization_days: int
+    mean_method: str
+    ewma_lambda: float
     covariance_method: str
+    shrinkage_alpha: float
     min_obs_days: int
     min_coverage: float
     min_weight_rf: float
@@ -73,12 +76,18 @@ class StrategyConfig:
 
 def load_strategy(path: str | Path) -> StrategyConfig:
     raw = load_yaml(path)
+    est = raw.get("estimation", {})
+    mean = est.get("mean", {})
+    cov = est.get("covariance", {})
     opt = raw.get("optimization", {})
     turnover = opt.get("turnover", {})
     robust = opt.get("robust_near_max_sharpe", {})
     return StrategyConfig(
-        annualization_days=int(raw["estimation"]["annualization_days"]),
-        covariance_method=str(raw["estimation"]["covariance"]["method"]),
+        annualization_days=int(est["annualization_days"]),
+        mean_method=str(mean.get("method", "sample")),
+        ewma_lambda=float(mean.get("ewma_lambda", 0.97)),
+        covariance_method=str(cov.get("method", "sample")),
+        shrinkage_alpha=float(cov.get("shrinkage_alpha", 0.2)),
         min_obs_days=int(raw["data_quality"]["min_obs_days"]),
         min_coverage=float(raw["data_quality"]["min_coverage"]),
         min_weight_rf=float(opt["min_weight_rf"]),

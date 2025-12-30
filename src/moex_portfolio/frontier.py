@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
 
+from .estimation import EstimationConfig, estimate_mu_cov, filter_and_align_returns
+
 
 @dataclass(frozen=True)
 class FrontierConfig:
@@ -17,16 +19,6 @@ class FrontierConstraints:
     min_weight_rf: float
     max_weight_any: float
     min_obs_days: int = 504
-
-
-def _prep_panel(returns: pd.DataFrame, constraints: FrontierConstraints) -> pd.DataFrame:
-    # Keep columns with sufficient history, then use a common intersection.
-    non_na = returns.notna().sum(axis=0)
-    keep_cols = non_na[non_na >= constraints.min_obs_days].index.tolist()
-    x = returns[keep_cols].dropna(how="any")
-    if x.empty:
-        raise ValueError("No overlapping return history after filtering")
-    return x
 
 
 def _linear_extreme_mu(mu: np.ndarray, rf_idx: int, c: FrontierConstraints, maximize: bool) -> np.ndarray:
@@ -94,6 +86,7 @@ def efficient_frontier(
     rf_col: str,
     constraints: FrontierConstraints,
     cfg: FrontierConfig = FrontierConfig(),
+    estimation: EstimationConfig | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Returns:
@@ -103,12 +96,14 @@ def efficient_frontier(
     if rf_col not in returns.columns:
         raise ValueError(f"rf_col={rf_col} not found")
 
-    x = _prep_panel(returns, constraints)
+    x = filter_and_align_returns(returns, min_obs_days=constraints.min_obs_days)
     cols = list(x.columns)
     rf_idx = cols.index(rf_col)
 
-    mu = x.mean().to_numpy()
-    cov = x.cov().to_numpy()
+    estimation = estimation or EstimationConfig()
+    mu_s, cov_df = estimate_mu_cov(x, estimation)
+    mu = mu_s.to_numpy()
+    cov = cov_df.to_numpy()
 
     w_min = _linear_extreme_mu(mu, rf_idx, constraints, maximize=False)
     w_max = _linear_extreme_mu(mu, rf_idx, constraints, maximize=True)
@@ -134,4 +129,3 @@ def efficient_frontier(
     frontier_df = pd.DataFrame(rows).sort_values("ret_daily").reset_index(drop=True)
     weights_df = pd.DataFrame(w_rows)
     return frontier_df, weights_df
-

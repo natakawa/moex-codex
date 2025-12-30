@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from .optimizer import Constraints, max_sharpe_long_only
+from .estimation import EstimationConfig
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,7 @@ def rolling_weights(
     constraints: Constraints,
     spec: RollingSpec,
     min_coverage: float = 0.95,
+    estimation: EstimationConfig | None = None,
 ) -> pd.DataFrame:
     # Uses time index ordering; assumes returns are daily.
     x_all = returns.sort_index()
@@ -43,7 +45,7 @@ def rolling_weights(
         if window.empty:
             continue
         try:
-            w = max_sharpe_long_only(window, rf_col=rf_col, constraints=constraints)
+            w = max_sharpe_long_only(window, rf_col=rf_col, constraints=constraints, estimation=estimation or EstimationConfig())
         except Exception:
             continue
 

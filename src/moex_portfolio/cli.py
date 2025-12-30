@@ -14,6 +14,7 @@ from .logging_utils import setup_logging
 from .presentation import ReportInputs, write_defense_markdown
 from .moex import fetch_and_store_universe
 from .optimizer import Constraints, max_sharpe_long_only, robust_near_max_sharpe_long_only
+from .estimation import EstimationConfig
 from .paths import Paths
 from .processing import build_panel
 from .report import asset_report, capm_report, write_df
@@ -22,6 +23,7 @@ from .frontier import FrontierConfig, FrontierConstraints, efficient_frontier
 from .attribution import concentration_metrics, risk_contributions
 from .multifactor import FactorSpec, run_multifactor
 from .backtest import BacktestSpec, backtest_summary, run_backtest
+from .estimation import filter_and_align_returns, estimate_mu_cov
 
 
 logger = logging.getLogger(__name__)
@@ -82,19 +84,26 @@ def cmd_analyze(args: argparse.Namespace) -> None:
         max_weight_any=strategy.max_weight_any,
         min_obs_days=strategy.min_obs_days,
     )
+    est_cfg = EstimationConfig(
+        mean_method=strategy.mean_method,
+        ewma_lambda=strategy.ewma_lambda,
+        cov_method=strategy.covariance_method,
+        shrinkage_alpha=strategy.shrinkage_alpha,
+    )
+
     frontier_df, frontier_w = efficient_frontier(
         inv_returns,
         rf_col=universe.risk_free.secid,
         constraints=f_cons,
         cfg=f_cfg,
+        estimation=est_cfg,
     )
     write_df(frontier_df, paths.analytics_dir / "frontier.csv", index=False)
     write_df(frontier_w, paths.analytics_dir / "frontier_weights.csv")
 
-    # Attribution for saved portfolios (max_sharpe / robust)
-    x = inv_returns.dropna(how="any")
-    mu = x.mean()
-    cov = x.cov()
+    # Attribution for saved portfolios (max_sharpe / robust), using the same µ/Σ estimator.
+    x = filter_and_align_returns(inv_returns, min_obs_days=strategy.min_obs_days)
+    mu, cov = estimate_mu_cov(x, est_cfg)
 
     portfolios = {
         "max_sharpe": paths.analytics_dir / "weights_max_sharpe.csv",
@@ -160,12 +169,20 @@ def cmd_optimize(args: argparse.Namespace) -> None:
         max_weight_any=strategy.max_weight_any,
         min_obs_days=strategy.min_obs_days,
     )
-    w = max_sharpe_long_only(returns, rf_col=universe.risk_free.secid, constraints=c)
+    est_cfg = EstimationConfig(
+        mean_method=strategy.mean_method,
+        ewma_lambda=strategy.ewma_lambda,
+        cov_method=strategy.covariance_method,
+        shrinkage_alpha=strategy.shrinkage_alpha,
+    )
+    w = max_sharpe_long_only(returns, rf_col=universe.risk_free.secid, constraints=c, estimation=est_cfg)
     write_df(w.to_frame(), paths.analytics_dir / "weights_max_sharpe.csv")
     logger.info("Wrote weights into %s", paths.analytics_dir / "weights_max_sharpe.csv")
 
     if strategy.robust_enabled:
-        # Reference weights for turnover/stability: previous robust if exists, else previous max-sharpe, else equal.
+        # Reference weights for turnover/stability:
+        # 1) previous robust (if exists) for continuity across runs,
+        # 2) otherwise current max-sharpe (keeps us "near-max" by construction).
         ref = None
         if strategy.turnover_reference == "previous":
             p = paths.analytics_dir / "weights_robust.csv"
@@ -176,8 +193,7 @@ def cmd_optimize(args: argparse.Namespace) -> None:
                 if p2.exists():
                     ref = pd.read_csv(p2, index_col=0)["weight"]
         if ref is None:
-            ref = pd.Series(1.0, index=returns.columns)
-            ref = ref / ref.sum()
+            ref = w
 
         w_rob = robust_near_max_sharpe_long_only(
             returns,
@@ -188,6 +204,7 @@ def cmd_optimize(args: argparse.Namespace) -> None:
             l2_lambda=strategy.robust_l2_lambda,
             hhi_lambda=strategy.robust_hhi_lambda,
             reference_weights=ref,
+            estimation=est_cfg,
         )
         write_df(w_rob.to_frame(), paths.analytics_dir / "weights_robust.csv")
         logger.info("Wrote robust weights into %s", paths.analytics_dir / "weights_robust.csv")
@@ -211,12 +228,19 @@ def cmd_robustness(args: argparse.Namespace) -> None:
         min_obs_days=strategy.min_obs_days,
     )
     spec = RollingSpec(window_days=strategy.rolling_window_days, step_days=strategy.rolling_step_days)
+    est_cfg = EstimationConfig(
+        mean_method=strategy.mean_method,
+        ewma_lambda=strategy.ewma_lambda,
+        cov_method=strategy.covariance_method,
+        shrinkage_alpha=strategy.shrinkage_alpha,
+    )
     w = rolling_weights(
         returns,
         rf_col=universe.risk_free.secid,
         constraints=c,
         spec=spec,
         min_coverage=strategy.min_coverage,
+        estimation=est_cfg,
     )
     write_df(w, paths.analytics_dir / "rolling_weights.csv")
     logger.info("Wrote rolling weights into %s", paths.analytics_dir / "rolling_weights.csv")
@@ -240,16 +264,36 @@ def cmd_backtest(args: argparse.Namespace) -> None:
         max_weight_any=strategy.max_weight_any,
         min_obs_days=strategy.min_obs_days,
     )
-    spec = BacktestSpec(
-        lookback_days=strategy.backtest_lookback_days,
-        rebalance_step_days=strategy.backtest_rebalance_step_days,
-        transaction_cost_bps=strategy.backtest_tc_bps,
+    est_cfg = EstimationConfig(
+        mean_method=strategy.mean_method,
+        ewma_lambda=strategy.ewma_lambda,
+        cov_method=strategy.covariance_method,
+        shrinkage_alpha=strategy.shrinkage_alpha,
     )
-    daily, rebs = run_backtest(returns, rf_col=universe.risk_free.secid, constraints=c, spec=spec)
-    write_df(daily, paths.analytics_dir / "backtest_daily.csv")
-    write_df(rebs, paths.analytics_dir / "backtest_rebalances.csv")
-    summ = backtest_summary(daily)
-    write_df(pd.DataFrame([summ]).set_index(pd.Index(["backtest"], name="run")), paths.analytics_dir / "backtest_summary.csv")
+    def run_one(name: str, use_robust: bool):
+        spec = BacktestSpec(
+            lookback_days=strategy.backtest_lookback_days,
+            rebalance_step_days=strategy.backtest_rebalance_step_days,
+            transaction_cost_bps=strategy.backtest_tc_bps,
+            use_robust=use_robust,
+            eps_sharpe_relative=strategy.robust_eps_sharpe_relative,
+            turnover_lambda=strategy.robust_turnover_lambda,
+            l2_lambda=strategy.robust_l2_lambda,
+            hhi_lambda=strategy.robust_hhi_lambda,
+        )
+        daily, rebs = run_backtest(returns, rf_col=universe.risk_free.secid, constraints=c, spec=spec, estimation=est_cfg)
+        write_df(daily, paths.analytics_dir / f"backtest_daily_{name}.csv")
+        write_df(rebs, paths.analytics_dir / f"backtest_rebalances_{name}.csv")
+        summ = backtest_summary(daily)
+        summ["run"] = name
+        return summ
+
+    rows = []
+    rows.append(run_one("max_sharpe", use_robust=False))
+    if strategy.robust_enabled:
+        rows.append(run_one("robust", use_robust=True))
+
+    write_df(pd.DataFrame(rows).set_index("run"), paths.analytics_dir / "backtest_summary.csv")
     logger.info("Wrote backtest outputs into %s", paths.analytics_dir)
 
 
